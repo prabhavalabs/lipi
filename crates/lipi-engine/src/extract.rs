@@ -109,7 +109,7 @@ impl Extractor {
         let Some(engine) = &self.ocr else {
             bail!("{}: images need Tesseract; run `lipi setup`", path.display());
         };
-        self.governor.admit(|h| events(Event::Hold(pdf::describe_hold(h))));
+        let _slot = self.governor.admit(|h| events(Event::Hold(pdf::describe_hold(h))));
         let t0 = Instant::now();
         let scratch = tempfile::Builder::new().prefix("lipi-").tempdir()?;
         // Tesseract reads most formats itself; normalise anything else (e.g. WebP, GIF) to PNG.

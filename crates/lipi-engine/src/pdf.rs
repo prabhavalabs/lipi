@@ -442,7 +442,7 @@ fn ocr_page(
     mut flags: Vec<String>,
 ) -> Page {
     let n = index as u32 + 1;
-    governor.admit(|h| events(Event::Hold(describe_hold(h))));
+    let _slot = governor.admit(|h| events(Event::Hold(describe_hold(h))));
     let t0 = Instant::now();
     let langs: Vec<Lang> = if langs.is_empty() {
         let scratch = image.parent().unwrap_or(Path::new("."));
@@ -509,12 +509,12 @@ fn ocr_page(
 pub fn describe_hold(h: &Hold) -> String {
     match h {
         Hold::LowMemory { available, required } => format!(
-            "waiting for memory: {} available, {} reserved for the system",
+            "low memory ({} available, {} reserved for the system): pausing or running one page at a time",
             lipi_sys::hardware::human_bytes(*available),
             lipi_sys::hardware::human_bytes(*required)
         ),
-        Hold::Pressure(p) => format!("waiting: the system reports {p:?} memory pressure"),
-        Hold::Load(l) => format!("waiting: system load {l:.1} is high"),
+        Hold::Pressure(p) => format!("{p:?} memory pressure: pausing or running one page at a time"),
+        Hold::Load(l) => format!("system load {l:.1} is high: running one page at a time"),
     }
 }
 
