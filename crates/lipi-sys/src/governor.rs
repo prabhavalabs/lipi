@@ -12,7 +12,7 @@
 use crate::hardware::Hardware;
 use crate::profile::Profile;
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use sysinfo::System;
 
 /// Apply the profile's process priority to the current process. Child processes inherit it.
@@ -106,16 +106,29 @@ pub fn memory_pressure() -> Pressure {
 }
 
 /// Admission controller shared by the worker pool.
+///
+/// Conditions are graded rather than all-or-nothing, because macOS routinely reports the
+/// "warn" memory-pressure level on a busy machine and holding work until it clears could wait
+/// forever:
+///
+/// * **hard limit** (critical pressure, or available memory below the floor of 5% / 512 MB):
+///   no new OCR job starts;
+/// * **soft limit** (available memory below the profile's reserve, "warn" pressure for the
+///   gentle and balanced profiles, or a high load average for gentle): jobs run one at a time;
+/// * otherwise jobs start freely, up to the pool size.
 pub struct Governor {
     profile: Profile,
     total_memory: u64,
     logical_cores: usize,
+    active: std::sync::Mutex<usize>,
+    /// Last reason reported to the caller, so a condition is reported once per run, not per job.
+    reported: std::sync::Mutex<Option<(bool, std::mem::Discriminant<Hold>)>>,
 }
 
-/// Why a job is being held back.
+/// Why a job is being held back or serialised.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Hold {
-    /// Available memory is below the profile's reserve.
+    /// Available memory is below the profile's reserve (soft) or the floor (hard).
     LowMemory {
         /// Available bytes.
         available: u64,
@@ -128,10 +141,68 @@ pub enum Hold {
     Load(f64),
 }
 
+/// Outcome of one admission check.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Decision {
+    /// Start the job.
+    Run,
+    /// Start the job only if no other job is running.
+    Serialize(Hold),
+    /// Do not start the job.
+    Wait(Hold),
+}
+
+/// Grade a snapshot of the machine for a profile. Pure function, so the policy can be tested.
+pub fn decide(
+    profile: Profile,
+    total_memory: u64,
+    available: u64,
+    pressure: Pressure,
+    load: f64,
+    logical_cores: usize,
+) -> Decision {
+    let floor = ((total_memory as f64 * 0.05) as u64).max(512 << 20);
+    if available < floor {
+        return Decision::Wait(Hold::LowMemory { available, required: floor });
+    }
+    if pressure == Pressure::Critical {
+        return Decision::Wait(Hold::Pressure(pressure));
+    }
+    let reserve = ((total_memory as f64 * profile.memory_reserve()) as u64).max(floor);
+    if available < reserve {
+        return Decision::Serialize(Hold::LowMemory { available, required: reserve });
+    }
+    if pressure == Pressure::Warn && profile != Profile::Max {
+        return Decision::Serialize(Hold::Pressure(pressure));
+    }
+    if profile == Profile::Gentle && load > logical_cores as f64 * 1.5 {
+        return Decision::Serialize(Hold::Load(load));
+    }
+    Decision::Run
+}
+
+/// A running job's place in the pool. Dropping it frees the place.
+pub struct Slot<'a> {
+    governor: &'a Governor,
+}
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        let mut n = self.governor.active.lock().unwrap_or_else(|e| e.into_inner());
+        *n = n.saturating_sub(1);
+    }
+}
+
 impl Governor {
     /// Governor for a profile on the probed hardware.
     pub fn new(profile: Profile, hw: &Hardware) -> Self {
-        Governor { profile, total_memory: hw.total_memory, logical_cores: hw.logical_cores }
+        Governor {
+            profile,
+            total_memory: hw.total_memory,
+            logical_cores: hw.logical_cores,
+            active: std::sync::Mutex::new(0),
+            reported: std::sync::Mutex::new(None),
+        }
     }
 
     /// The profile in force.
@@ -139,42 +210,65 @@ impl Governor {
         self.profile
     }
 
-    /// Check once whether a new job may start.
-    pub fn check(&self) -> Option<Hold> {
+    /// Grade the machine's current state.
+    pub fn check(&self) -> Decision {
         let mut sys = System::new();
         sys.refresh_memory();
-        let available = sys.available_memory();
-        let required = ((self.total_memory as f64 * self.profile.memory_reserve()) as u64).max(512 << 20);
-        if available < required {
-            return Some(Hold::LowMemory { available, required });
-        }
-        let p = memory_pressure();
-        let limit = if self.profile == Profile::Max { Pressure::Critical } else { Pressure::Warn };
-        if p >= limit {
-            return Some(Hold::Pressure(p));
-        }
-        if self.profile == Profile::Gentle {
-            let load = System::load_average().one;
-            if load > self.logical_cores as f64 * 1.5 {
-                return Some(Hold::Load(load));
-            }
-        }
-        None
+        decide(
+            self.profile,
+            self.total_memory,
+            sys.available_memory(),
+            memory_pressure(),
+            System::load_average().one,
+            self.logical_cores,
+        )
     }
 
-    /// Block until a new job may start. `on_hold` is called once per distinct hold.
-    pub fn admit(&self, mut on_hold: impl FnMut(&Hold)) -> Duration {
-        let start = Instant::now();
-        let mut last: Option<std::mem::Discriminant<Hold>> = None;
-        while let Some(h) = self.check() {
-            let d = std::mem::discriminant(&h);
-            if last != Some(d) {
-                on_hold(&h);
-                last = Some(d);
+    /// Report a reason once until the condition changes or clears.
+    fn report(
+        &self,
+        key: Option<(bool, std::mem::Discriminant<Hold>)>,
+        h: Option<&Hold>,
+        on_hold: &mut impl FnMut(&Hold),
+    ) {
+        let mut last = self.reported.lock().unwrap_or_else(|e| e.into_inner());
+        if *last != key {
+            if let Some(h) = h {
+                on_hold(h);
             }
-            std::thread::sleep(Duration::from_millis(1500));
+            *last = key;
         }
-        start.elapsed()
+    }
+
+    /// Block until a new job may start and return its slot. `on_hold` is called when the reason
+    /// for waiting or for running one job at a time first appears or changes.
+    pub fn admit(&self, mut on_hold: impl FnMut(&Hold)) -> Slot<'_> {
+        loop {
+            let decision = self.check();
+            let key = match &decision {
+                Decision::Run => None,
+                Decision::Serialize(h) => Some((true, std::mem::discriminant(h))),
+                Decision::Wait(h) => Some((false, std::mem::discriminant(h))),
+            };
+            let hold = match &decision {
+                Decision::Run => None,
+                Decision::Serialize(h) | Decision::Wait(h) => Some(h),
+            };
+            self.report(key, hold, &mut on_hold);
+            {
+                let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
+                let start = match &decision {
+                    Decision::Run => true,
+                    Decision::Serialize(_) => *active == 0,
+                    Decision::Wait(_) => false,
+                };
+                if start {
+                    *active += 1;
+                    return Slot { governor: self };
+                }
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
     }
 }
 
@@ -188,6 +282,53 @@ mod tests {
         let cmd = worker_command(std::path::Path::new("tesseract"), Profile::Balanced);
         let envs: Vec<_> = cmd.get_envs().collect();
         assert!(envs.contains(&(OsStr::new("OMP_THREAD_LIMIT"), Some(OsStr::new("1")))));
+    }
+
+    const GIB: u64 = 1 << 30;
+
+    #[test]
+    fn warn_pressure_serialises_instead_of_waiting_forever() {
+        let d = decide(Profile::Gentle, 24 * GIB, 12 * GIB, Pressure::Warn, 2.0, 10);
+        assert_eq!(d, Decision::Serialize(Hold::Pressure(Pressure::Warn)));
+        let d = decide(Profile::Max, 24 * GIB, 12 * GIB, Pressure::Warn, 2.0, 10);
+        assert_eq!(d, Decision::Run);
+    }
+
+    #[test]
+    fn hard_limits_wait() {
+        assert!(matches!(
+            decide(Profile::Max, 24 * GIB, 12 * GIB, Pressure::Critical, 0.0, 10),
+            Decision::Wait(_)
+        ));
+        assert!(matches!(
+            decide(Profile::Max, 24 * GIB, 256 << 20, Pressure::Normal, 0.0, 10),
+            Decision::Wait(_)
+        ));
+    }
+
+    #[test]
+    fn below_reserve_serialises() {
+        // gentle reserves 25%: 5 GiB available of 24 GiB is below it but above the 5% floor.
+        let d = decide(Profile::Gentle, 24 * GIB, 5 * GIB, Pressure::Normal, 0.0, 10);
+        assert!(matches!(d, Decision::Serialize(Hold::LowMemory { .. })));
+        assert_eq!(decide(Profile::Balanced, 24 * GIB, 12 * GIB, Pressure::Normal, 50.0, 10), Decision::Run);
+        assert!(matches!(
+            decide(Profile::Gentle, 24 * GIB, 12 * GIB, Pressure::Normal, 50.0, 10),
+            Decision::Serialize(Hold::Load(_))
+        ));
+    }
+
+    #[test]
+    fn slots_are_released() {
+        let hw = Hardware::probe();
+        let g = Governor::new(Profile::Max, &hw);
+        if g.check() == Decision::Run {
+            let a = g.admit(|_| {});
+            let b = g.admit(|_| {});
+            assert_eq!(*g.active.lock().unwrap(), 2);
+            drop((a, b));
+            assert_eq!(*g.active.lock().unwrap(), 0);
+        }
     }
 
     #[test]
