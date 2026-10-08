@@ -17,6 +17,11 @@ pub enum Method {
         /// Vowel signs moved.
         moved: usize,
     },
+    /// The PDF text layer typed in a legacy (non-Unicode) font, converted to Unicode.
+    LegacyConverted {
+        /// Legacy font family, e.g. `fm-abhaya`.
+        family: String,
+    },
     /// Optical character recognition of the rendered page or image.
     Ocr {
         /// Engine identifier, e.g. `tesseract-5.5.2`.
@@ -45,6 +50,7 @@ impl Method {
         match self {
             Method::TextLayer => "text-layer",
             Method::TextLayerRepaired { .. } => "text-layer-repaired",
+            Method::LegacyConverted { .. } => "legacy-converted",
             Method::Ocr { .. } => "ocr",
             Method::Markup => "markup",
             Method::Office => "office",

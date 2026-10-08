@@ -39,6 +39,8 @@ pub struct ExtractConfig {
     pub verify: bool,
     /// Repair visual-order vowel signs instead of OCRing when that is the only defect.
     pub repair: bool,
+    /// Convert text layers typed in a legacy font (FM Abhaya) instead of OCRing those pages.
+    pub legacy_convert: bool,
     /// Rendering resolution for OCR.
     pub dpi: u32,
     /// Resource profile.
@@ -54,6 +56,7 @@ impl Default for ExtractConfig {
             ocr: OcrMode::Auto,
             verify: true,
             repair: false,
+            legacy_convert: true,
             dpi: 300,
             profile: Profile::Balanced,
             workers: None,
