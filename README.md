@@ -5,6 +5,8 @@
 - **Local-first.** It never calls a cloud API, needs no API key, and sends no telemetry. After a one-time setup it runs fully offline.
 - **Accuracy-first for low-resource scripts.** lipi checks every page's text layer before trusting it:
   - It detects legacy (non-Unicode) fonts, glyph mapping errors and vowel signs stored in visual order.
+  - It converts text typed in the FM Abhaya legacy fonts to Unicode deterministically, keeping the
+    headings and tables of the text layer, and OCRs only what it cannot convert.
   - It verifies Sinhala and Tamil text against OCR.
   - It chooses OCR languages from the scripts actually on the page.
 - **Hardware-aware.** It detects CPU cores, memory and GPU, recommends a profile, warns when the machine cannot run one, and throttles itself so the machine stays responsive.
@@ -42,6 +44,7 @@ lipi extract <INPUT>... [-o OUT] [-f md|json|txt] [options]
 | `--ocr auto\|always\|never` | When to OCR PDF pages (default `auto`) |
 | `--no-verify` | Skip checking Sinhala/Tamil text layers against OCR |
 | `--repair` | Repair visual-order vowel signs instead of OCRing those pages |
+| `--no-legacy-convert` | Do not convert FM Abhaya text layers to Unicode; OCR those pages instead |
 | `--dpi 300` | Rendering resolution for OCR |
 | `-p, --profile gentle\|balanced\|max` | Resource profile (default `balanced`) |
 | `-w, --workers N` | Override the number of OCR workers |
@@ -72,19 +75,26 @@ Environment variables:
 
 `lipi bench <dir>` reports CER and WER for every document that has a `<name>.gt.txt`. On 24 synthetic A4 pages (clean and degraded, several fonts), the mean CER is **0.58% for Tamil** and **5.2% for Sinhala**. The Sinhala figure ranges from 0.03–2.7% with Noto Sans Sinhala to 6–9% with Apple's Sinhala MN fonts. Details and model comparisons are in [bench/README.md](bench/README.md).
 
-The way lipi decides between a text layer and OCR, and why Sinhala and Tamil text layers are verified, is described in [docs/architecture](docs/architecture/README.md).
+On 41 held-out gazette pages typed in FM Abhaya, the legacy-font converter agrees with OCR of the same
+pages at a word F1 of 0.88 while taking about 0.3 s per page against 3–4 s for OCR; the differences
+are mostly OCR errors (see [bench/README.md](bench/README.md#legacy-font-conversion)).
+
+The way lipi decides between a text layer, conversion and OCR, and why Sinhala and Tamil text layers
+are verified, is described in [docs/architecture](docs/architecture/README.md).
 
 ## Repository layout
 
 ```
 crates/lipi-core     Document model, input format detection, Markdown / JSON / text renderers
 crates/lipi-script   Sinhala / Tamil / Latin script analysis, text-layer health checks,
-                     visual-order repair, Unicode normalisation, legacy-font detection
+                     visual-order repair, Unicode normalisation, legacy-font detection and
+                     the FM Abhaya converter
 crates/lipi-engine   Extractors (PDF, image, HTML, text, office), OCR driver, page router,
                      metrics
 crates/lipi-sys      Hardware probe, profiles, resource governor, dependency installer
 crates/lipi-cli      The `lipi` command-line interface
-bench/               Benchmark method, results and the synthetic page generator (Python)
+bench/               Benchmark method, results, the synthetic page generator and the
+                     legacy-font mapping derivation tools (Python)
 docs/architecture/   Architecture diagrams (D2) and design notes
 ```
 
