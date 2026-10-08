@@ -1,0 +1,70 @@
+# Sinhala OCR confusion rules for lipi_script::correct.
+#
+# Columns: ocr<TAB>truth<TAB>weight<TAB>count<TAB>ocr_occurrences<TAB>code points.
+# `weight` is the share of occurrences of `ocr` in Tesseract output that should have been
+# `truth`, so it is the probability that the rule applies to a given occurrence.
+#
+# Derived on 2026-10-08 with bench/postcorrect/learn.py from 48 synthetic A4 pages (8 texts in
+# Sinhala MN, Sinhala Sangam MN and Noto Sans Sinhala, clean and degraded) recognised by
+# Tesseract 5.5.2 with tessdata_best `sin` (e12c65a), aligned with their ground truth. The pages
+# were rendered from 102 Sri Lankan cabinet-decision texts kept apart from both the lexicon
+# documents and the evaluation documents. Rules seen fewer than 4 times, sources longer than two
+# code points and targets longer than three were dropped. The table holds code points only.
+ත	න	0.216	918	4256	U+0DAD -> U+0DB1
+ච	ව	0.666	424	637	U+0DA0 -> U+0DC0
+න	ත	0.108	346	3199	U+0DB1 -> U+0DAD
+ී	ි	0.040	74	1865	U+0DD3 -> U+0DD2
+ම	ම්	0.015	56	3709	U+0DB8 -> U+0DB8 U+0DCA
+ඳු	ඳ	0.598	52	87	U+0DB3 U+0DD4 -> U+0DB3
+ූ	ු	0.186	34	183	U+0DD6 -> U+0DD4
+ෙ	ේ	0.044	33	746	U+0DD9 -> U+0DDA
+නූ	තු	0.824	28	34	U+0DB1 U+0DD6 -> U+0DAD U+0DD4
+එ	ඒ	0.108	27	250	U+0D91 -> U+0D92
+දු	ද	0.229	27	118	U+0DAF U+0DD4 -> U+0DAF
+්	ී	0.004	23	5586	U+0DCA -> U+0DD3
+ර	රි	0.005	22	4077	U+0DBB -> U+0DBB U+0DD2
+ි	්	0.004	22	5147	U+0DD2 -> U+0DCA
+ත	තු	0.005	20	4256	U+0DAD -> U+0DAD U+0DD4
+ත	ති	0.004	19	4256	U+0DAD -> U+0DAD U+0DD2
+ක	කි	0.004	15	3659	U+0D9A -> U+0D9A U+0DD2
+ඟ	ග	0.263	15	57	U+0D9F -> U+0D9C
+ා	්‍ය	0.004	15	3535	U+0DCF -> U+0DCA U+200D U+0DBA
+ග	ශ	0.015	14	914	U+0D9C -> U+0DC1
+චන	වත	0.230	14	61	U+0DA0 U+0DB1 -> U+0DC0 U+0DAD
+ත	නි	0.003	14	4256	U+0DAD -> U+0DB1 U+0DD2
+්	ි	0.003	14	5586	U+0DCA -> U+0DD2
+ෙත	ේන	0.112	14	125	U+0DD9 U+0DAD -> U+0DDA U+0DB1
+ත්	නී	0.009	13	1405	U+0DAD U+0DCA -> U+0DB1 U+0DD3
+භ	හ	0.127	13	102	U+0DB7 -> U+0DC4
+ට	ව	0.011	12	1111	U+0DA7 -> U+0DC0
+න	හ	0.003	9	3199	U+0DB1 -> U+0DC4
+ර	ප	0.002	9	4077	U+0DBB -> U+0DB4
+ි	ී	0.002	8	5147	U+0DD2 -> U+0DD3
+ු	ූ	0.004	8	2036	U+0DD4 -> U+0DD6
+ුන	හ	0.073	8	109	U+0DD4 U+0DB1 -> U+0DC4
+න	නි	0.002	7	3199	U+0DB1 -> U+0DB1 U+0DD2
+හ	ග	0.006	7	1254	U+0DC4 -> U+0D9C
+හ	ඟ	0.006	7	1254	U+0DC4 -> U+0D9F
+ැ	ු	0.007	7	997	U+0DD0 -> U+0DD4
+ට	ට්	0.005	6	1111	U+0DA7 -> U+0DA7 U+0DCA
+ත	ින	0.001	6	4256	U+0DAD -> U+0DD2 U+0DB1
+ප	ස	0.003	6	1990	U+0DB4 -> U+0DC3
+ීත	ින	0.133	6	45	U+0DD3 U+0DAD -> U+0DD2 U+0DB1
+ු	්‍ර	0.003	6	2036	U+0DD4 -> U+0DCA U+200D U+0DBB
+ෟ	්‍ය	0.545	6	11	U+0DDF -> U+0DCA U+200D U+0DBA
+ග	ගු	0.005	5	914	U+0D9C -> U+0D9C U+0DD4
+තන	ත	0.093	5	54	U+0DAD U+0DB1 -> U+0DAD
+දා	ද	0.050	5	100	U+0DAF U+0DCF -> U+0DAF
+ො	ෙ	0.023	5	216	U+0DDC -> U+0DD9
+ඈ	ඇ	1.000	4	4	U+0D88 -> U+0D87
+චත	වන	0.125	4	32	U+0DA0 U+0DAD -> U+0DC0 U+0DB1
+ත	හ	0.001	4	4256	U+0DAD -> U+0DC4
+තන	නත	0.074	4	54	U+0DAD U+0DB1 -> U+0DB1 U+0DAD
+ද	ඳ	0.003	4	1527	U+0DAF -> U+0DB3
+න	ශ	0.001	4	3199	U+0DB1 -> U+0DC1
+ඳා	ඳ	0.800	4	5	U+0DB3 U+0DCF -> U+0DB3
+ය	යා	0.001	4	3255	U+0DBA -> U+0DBA U+0DCF
+ලු	ල	0.091	4	44	U+0DBD U+0DD4 -> U+0DBD
+වච	ව	0.800	4	5	U+0DC0 U+0DA0 -> U+0DC0
+ීන	ිත	0.364	4	11	U+0DD3 U+0DB1 -> U+0DD2 U+0DAD
+ුස	්‍ය	0.267	4	15	U+0DD4 U+0DC3 -> U+0DCA U+200D U+0DBA

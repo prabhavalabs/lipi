@@ -3,6 +3,7 @@
 mod bench;
 mod doctor;
 mod extract;
+mod lexicon;
 mod setup;
 
 use clap::{Args, Parser, Subcommand};
@@ -50,6 +51,31 @@ enum Command {
         #[command(flatten)]
         opts: EngineArgs,
     },
+    /// Build word lexicons used to correct systematic OCR confusions.
+    Lexicon {
+        #[command(subcommand)]
+        command: LexiconCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum LexiconCommand {
+    /// Build a word-frequency lexicon from clean Unicode text files (`.txt`, `.md`) and install
+    /// it in lipi's data directory.
+    Build {
+        /// Text files or directories (searched recursively).
+        #[arg(required = true)]
+        inputs: Vec<PathBuf>,
+        /// Language of the text: si, ta or en.
+        #[arg(short, long, default_value = "si")]
+        lang: String,
+        /// Drop words seen fewer times than this.
+        #[arg(long, default_value_t = 1)]
+        min_count: u32,
+        /// Write the lexicon here instead of the data directory.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Args)]
@@ -90,6 +116,9 @@ struct EngineArgs {
     /// Do not convert legacy-font (FM Abhaya) text layers; OCR those pages instead.
     #[arg(long)]
     no_legacy_convert: bool,
+    /// Do not correct systematic OCR confusions in Sinhala with the installed lexicon.
+    #[arg(long)]
+    no_correct: bool,
     /// Rendering resolution for OCR.
     #[arg(long, default_value_t = 300)]
     dpi: u32,
@@ -113,6 +142,7 @@ impl EngineArgs {
             verify: !self.no_verify,
             repair: self.repair,
             legacy_convert: !self.no_legacy_convert,
+            correct: !self.no_correct,
             dpi: self.dpi.clamp(72, 600),
             profile: self.profile,
             workers: self.workers,
@@ -127,6 +157,9 @@ fn main() -> ExitCode {
         Command::Doctor { json } => doctor::run(json),
         Command::Setup { yes, skip_engine } => setup::run(yes, skip_engine),
         Command::Bench { dir, json, opts } => bench::run(&dir, json.as_deref(), &opts),
+        Command::Lexicon { command: LexiconCommand::Build { inputs, lang, min_count, output } } => {
+            lexicon::build(&inputs, &lang, min_count, output.as_deref())
+        }
     };
     match result {
         Ok(code) => code,

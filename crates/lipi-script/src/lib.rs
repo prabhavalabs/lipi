@@ -7,10 +7,12 @@
 //!   (legacy-font Latin "gibberish", vowel signs stored in visual order, foreign code points
 //!   inside Indic words).
 //! * [`repair`]: deterministic repair of visual-order vowel signs.
+//! * [`correct`]: lexicon-constrained post-correction of OCR confusions.
 //! * [`normalize`]: Unicode normalisation that preserves the joiners Sinhala and Tamil need.
 //! * [`fonts`]: recognition of legacy (non-Unicode) Sinhala and Tamil font families.
 //! * [`legacy`]: conversion of text typed in legacy fonts (FM Abhaya) to Unicode.
 
+pub mod correct;
 pub mod fonts;
 pub mod health;
 pub mod legacy;

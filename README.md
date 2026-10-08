@@ -45,6 +45,7 @@ lipi extract <INPUT>... [-o OUT] [-f md|json|txt] [options]
 | `--no-verify` | Skip checking Sinhala/Tamil text layers against OCR |
 | `--repair` | Repair visual-order vowel signs instead of OCRing those pages |
 | `--no-legacy-convert` | Do not convert FM Abhaya text layers to Unicode; OCR those pages instead |
+| `--no-correct` | Do not correct systematic Sinhala OCR confusions with the installed lexicon |
 | `--dpi 300` | Rendering resolution for OCR |
 | `-p, --profile gentle\|balanced\|max` | Resource profile (default `balanced`) |
 | `-w, --workers N` | Override the number of OCR workers |
@@ -71,6 +72,21 @@ Environment variables:
 - `LIPI_TESSERACT`: path of the Tesseract executable.
 - `LIPI_PDFIUM`: path of the PDFium library.
 
+### Sinhala post-correction
+
+Tesseract confuses a few Sinhala letters systematically (ව/ච, ත/න, vowel length), most of all in
+text set in Apple's Sinhala MN fonts. lipi corrects OCR output against a word lexicon: a word that is
+not in the lexicon is replaced only when applying at most two learned confusion rules gives a lexicon
+word that is clearly the best candidate. Words that are in the lexicon are never changed. Build the
+lexicon once from clean Unicode text in the domain you work with:
+
+```bash
+lipi lexicon build texts/ --lang si      # installs <data dir>/lexicon/si.lex
+```
+
+Without a lexicon, extraction runs unchanged and says so once. `--no-correct` turns the step off;
+corrected pages carry a `corrected:N` flag in JSON output.
+
 ## Accuracy
 
 `lipi bench <dir>` reports CER and WER for every document that has a `<name>.gt.txt`. On 24 synthetic A4 pages (clean and degraded, several fonts), the mean CER is **0.58% for Tamil** and **5.2% for Sinhala**. The Sinhala figure ranges from 0.03–2.7% with Noto Sans Sinhala to 6–9% with Apple's Sinhala MN fonts. Details and model comparisons are in [bench/README.md](bench/README.md).
@@ -79,22 +95,26 @@ On 41 held-out gazette pages typed in FM Abhaya, the legacy-font converter agree
 pages at a word F1 of 0.88 while taking about 0.3 s per page against 3–4 s for OCR; the differences
 are mostly OCR errors (see [bench/README.md](bench/README.md#legacy-font-conversion)).
 
-The way lipi decides between a text layer, conversion and OCR, and why Sinhala and Tamil text layers
-are verified, is described in [docs/architecture](docs/architecture/README.md).
+With a domain lexicon installed (`lipi lexicon build`), post-correction of systematic Sinhala confusions
+lowers the mean CER on 36 held-out synthetic pages from **6.36% to 4.04%** and the WER from 21.98% to
+9.11%; pages set in Noto Sans Sinhala and Tamil pages are unchanged or marginally better.
+
+The way lipi decides between a text layer, conversion and OCR, and why Sinhala and Tamil text
+layers are verified, is described in [docs/architecture](docs/architecture/README.md).
 
 ## Repository layout
 
 ```
 crates/lipi-core     Document model, input format detection, Markdown / JSON / text renderers
 crates/lipi-script   Sinhala / Tamil / Latin script analysis, text-layer health checks,
-                     visual-order repair, Unicode normalisation, legacy-font detection and
-                     the FM Abhaya converter
+                     visual-order repair, Unicode normalisation, legacy-font detection,
+                     the FM Abhaya converter and lexicon-constrained OCR post-correction
 crates/lipi-engine   Extractors (PDF, image, HTML, text, office), OCR driver, page router,
                      metrics
 crates/lipi-sys      Hardware probe, profiles, resource governor, dependency installer
 crates/lipi-cli      The `lipi` command-line interface
 bench/               Benchmark method, results, the synthetic page generator and the
-                     legacy-font mapping derivation tools (Python)
+                     legacy-font mapping derivation and confusion-rule learning tools (Python)
 docs/architecture/   Architecture diagrams (D2) and design notes
 ```
 

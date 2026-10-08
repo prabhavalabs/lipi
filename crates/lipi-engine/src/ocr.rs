@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use lipi_script::{Lang, ScriptShares};
 use lipi_sys::Profile;
 use lipi_sys::deps::Tesseract;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -29,6 +29,20 @@ pub struct OcrPage {
     pub confidence: Option<f32>,
     /// Recognised words.
     pub words: usize,
+    /// Every recognised word with its confidence, in reading order.
+    pub word_confidences: Vec<(String, f32)>,
+}
+
+impl OcrPage {
+    /// Lowest confidence of each distinct token, after [`lipi_script::normalize`].
+    pub fn confidence_map(&self) -> HashMap<String, f32> {
+        let mut m: HashMap<String, f32> = HashMap::new();
+        for (w, c) in &self.word_confidences {
+            let w = lipi_script::normalize(w);
+            m.entry(w).and_modify(|e| *e = e.min(*c)).or_insert(*c);
+        }
+        m
+    }
 }
 
 /// The OCR engine.
@@ -175,7 +189,7 @@ struct Para {
 pub fn parse_tsv(tsv: &str) -> Vec<OcrPage> {
     // page -> (block, par) -> lines
     let mut pages: BTreeMap<u32, BTreeMap<(u32, u32), Para>> = BTreeMap::new();
-    let mut confs: BTreeMap<u32, Vec<f32>> = BTreeMap::new();
+    let mut confs: BTreeMap<u32, Vec<(String, f32)>> = BTreeMap::new();
     for line in tsv.lines().skip(1) {
         let cols: Vec<&str> = line.split('\t').collect();
         if cols.len() < 12 || cols[0] != "5" {
@@ -190,7 +204,7 @@ pub fn parse_tsv(tsv: &str) -> Vec<OcrPage> {
         if let Ok(c) = cols[10].parse::<f32>()
             && c >= 0.0
         {
-            confs.entry(page).or_default().push(c);
+            confs.entry(page).or_default().push((text.to_string(), c));
         }
         pages
             .entry(page)
@@ -211,10 +225,11 @@ pub fn parse_tsv(tsv: &str) -> Vec<OcrPage> {
                 .filter(|p| !p.is_empty())
                 .collect::<Vec<_>>()
                 .join("\n\n");
-            let c = confs.remove(&page).unwrap_or_default();
-            let words = c.len();
-            let confidence = if c.is_empty() { None } else { Some(c.iter().sum::<f32>() / c.len() as f32) };
-            OcrPage { page, text, confidence, words }
+            let word_confidences = confs.remove(&page).unwrap_or_default();
+            let words = word_confidences.len();
+            let confidence =
+                (words > 0).then(|| word_confidences.iter().map(|(_, c)| *c).sum::<f32>() / words as f32);
+            OcrPage { page, text, confidence, words, word_confidences }
         })
         .collect()
 }
@@ -265,6 +280,9 @@ mod tests {
         assert_eq!(p[0].text, "The judgment was\n\nශ්‍රී ලංකා");
         assert_eq!(p[0].words, 6);
         assert!((p[0].confidence.unwrap() - 87.416_67).abs() < 0.01);
+        let m = p[0].confidence_map();
+        assert_eq!(m.get("ලංකා"), Some(&70.0));
+        assert_eq!(m.len(), 6);
     }
 
     #[test]

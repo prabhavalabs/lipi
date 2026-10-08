@@ -12,6 +12,7 @@ pub fn run(json: bool) -> Result<ExitCode> {
     let tesseract = deps::find_tesseract();
     let tessdata = deps::tessdata_state();
     let pdfium = deps::pdfium_library();
+    let lexicon = paths::lexicon_file("si");
     let ready = tesseract.as_ref().is_some_and(|t| t.major() >= 4)
         && tessdata.iter().all(|s| s.present)
         && pdfium.is_some();
@@ -27,6 +28,7 @@ pub fn run(json: bool) -> Result<ExitCode> {
                 "tessdata_dir": paths::tessdata_dir(),
                 "tessdata": tessdata,
                 "pdfium": pdfium,
+                "lexicon_si": lexicon.is_file().then_some(&lexicon),
             },
             "recommended_profile": profile,
             "workers": { "gentle": Profile::Gentle.workers(&hw), "balanced": Profile::Balanced.workers(&hw), "max": Profile::Max.workers(&hw) },
@@ -75,6 +77,13 @@ pub fn run(json: bool) -> Result<ExitCode> {
     match &pdfium {
         Some(p) => println!("  ✓ pdfium         {}", p.display()),
         None => println!("  ✗ pdfium         not installed (needed to render PDF pages for OCR)"),
+    }
+    if lexicon.is_file() {
+        println!("  ✓ lexicon si     {}", lexicon.display());
+    } else {
+        println!(
+            "  · lexicon si     not built; `lipi lexicon build <text files>` enables Sinhala post-correction"
+        );
     }
     println!();
     println!(

@@ -57,6 +57,16 @@ Tesseract's orientation-and-script detection labels Sinhala as Latin. lipi there
 
 ![OCR language selection](svg/03-ocr-languages.svg)
 
+### Sinhala post-correction
+
+OCR output for Sinhala pages passes through a lexicon-constrained corrector (`lipi_script::correct`).
+A word that is not in the installed lexicon is replaced only when applying at most two learned
+confusion rules (ච→ව, ත→න, ී→ි, …) yields a lexicon word whose score (frequency × rule
+probabilities) clears a minimum and leads the runner-up by a margin, and whose OCR confidence is not
+very high. Words in the lexicon are never changed, so the step cannot damage well-recognised text.
+The rules were learned by aligning Tesseract output with ground truth (`bench/postcorrect/`); the
+lexicon is built by the user from clean text (`lipi lexicon build`) and lives in the data directory.
+
 ## 04 · Resource governor
 OCR runs as separate single-threaded processes at reduced priority. Before each page starts, the governor checks available memory and the operating system's memory pressure. When the machine is busy, lipi waits instead of competing.
 
@@ -74,7 +84,9 @@ OCR runs as separate single-threaded processes at reduced priority. Before each 
 ## Roadmap
 
 1. **More legacy-font converters**: FM Abhaya is done; Bamini (Tamil, 7% of legacy-font documents in the corpus) and the DL family are next, derived the same way.
-2. **Sinhala post-correction**: dictionary-constrained correction of systematic confusions (ව/ච, ත/න).
+2. **Sinhala post-correction, next steps**: the lexicon-constrained corrector exists; it needs a
+   larger general-domain lexicon and validation on real scans, and could weigh candidates with
+   word bigrams.
 3. **Model engines**: optional Python workers over a JSON-RPC stdio protocol, for 1B-parameter OCR models on Metal or CUDA. The first candidate is LightOnOCR-2, whose published Sinhala fine-tune reports about 1% CER on Sri Lankan Acts.
 4. **Layout and tables on scanned pages**: an ONNX layout and table-structure model.
 5. **Real-document benchmark**: hand-checked Sinhala and Tamil transcriptions that decide the defaults.

@@ -7,6 +7,7 @@ pub mod legacy;
 pub mod metrics;
 pub mod ocr;
 pub mod pdf;
+pub mod postcorrect;
 pub mod text;
 
 pub use config::{Event, ExtractConfig, OcrMode};
