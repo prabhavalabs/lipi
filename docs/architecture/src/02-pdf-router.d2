@@ -1,0 +1,36 @@
+...@_theme
+direction: down
+title: |md
+  # 02 · PDF page router
+  Per page, cheapest first; Sinhala/Tamil text layers are verified before they are trusted
+| {near: top-center}
+
+page: "PDF page\npdf-inspector markdown + needs_ocr\nlopdf font names" {class: prepare}
+forced: "--ocr always?" {class: decision}
+insp: "pdf-inspector:\nneeds OCR?" {class: decision}
+legacy: "Legacy Sinhala/Tamil font\n(FM*, DL*, Bamini, …) and\nLatin text?" {class: decision}
+health: "lipi-script health check" {class: decision}
+repair: "--repair and only\nvisual-order defects?" {class: decision}
+fixed: "Text layer, repaired\n(vowel signs moved, NFC)" {class: ok}
+indic: "Sinhala/Tamil\ntext ≥ 200 letters?" {class: decision}
+verify: "Verify: OCR the richest page\ncompare (bigram agreement)" {class: lang}
+agree: "agreement ≥ 0.90?" {class: decision}
+text: "Use text layer\nheadings · tables" {class: ok}
+ocr: "OCR\nrender 300 dpi (PDFium)\nTesseract with page's scripts" {class: extract}
+
+page -> forced
+forced -> ocr: "yes" {class: fail}
+forced -> insp: "no"
+insp -> ocr: "yes: scanned / garbled" {class: fail}
+insp -> legacy: "no"
+legacy -> ocr: "yes" {class: fail}
+legacy -> health: "no"
+health -> repair: "broken"
+health -> indic: "healthy"
+repair -> fixed: "yes, re-check passes"
+repair -> ocr: "no" {class: fail}
+indic -> verify: "yes"
+indic -> text: "no"
+verify -> agree
+agree -> text: "yes · flag verified"
+agree -> ocr: "no · all Sinhala/Tamil pages" {class: fail}

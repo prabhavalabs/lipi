@@ -1,0 +1,20 @@
+...@_theme
+direction: right
+title: |md
+  # 03 · Choosing OCR language packs
+  The wrong pack is the largest avoidable OCR error; Tesseract's own script detection reads Sinhala as Latin
+| {near: top-center}
+
+q1: "--lang given?" {class: decision}
+q2: "Text layer letters\n(even if broken)?" {class: decision}
+q3: "Legacy font\non the page?" {class: decision}
+probe: "Probe: OCR three bands\n(top · middle · bottom)\nwith sin+tam+eng" {class: lang}
+pack: "Language packs\nscripts ≥ 3% of letters\n(≥ 8% when probed)\ne.g. sin+tam+eng for a\ntrilingual gazette masthead" {class: ok}
+
+q1 -> pack: "use as given"
+q1 -> q2: "no"
+q2 -> pack: "scripts present"
+q2 -> q3: "none / gibberish"
+q3 -> pack: "font's script\n(+eng if Latin fonts)"
+q3 -> probe: "no"
+probe -> pack

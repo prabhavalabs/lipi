@@ -1,0 +1,23 @@
+...@_theme
+direction: right
+title: |md
+  # 04 · Resource governor
+  OCR never freezes the machine: few single-threaded workers, low priority, memory admission
+| {near: top-center}
+
+profiles: "Profiles" {
+  class: group
+  grid-columns: 1
+  gentle: "gentle\n≤ 2 workers · nice 19\nmacOS background QoS (E-cores)\nhold at 25% memory reserve" {class: ok}
+  balanced: "balanced (default)\nperformance cores − 1 · nice 10\nhold at 15% memory reserve" {class: warn}
+  max: "max\nphysical cores · normal priority\nhold only on critical pressure" {class: extract}
+}
+
+admit: "Before each OCR page:\nmemory available ≥ reserve?\nOS pressure normal?\n(gentle: load average)" {class: decision}
+wait: "Wait 1.5 s\nreport the hold once" {class: warn}
+run: "Tesseract process\nOMP_THREAD_LIMIT=1\n300 s timeout" {class: extract}
+
+profiles -> admit
+admit -> run: "yes"
+admit -> wait: "no" {class: fail}
+wait -> admit {class: async}
