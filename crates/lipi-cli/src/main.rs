@@ -87,6 +87,9 @@ struct EngineArgs {
     /// Repair visual-order vowel signs in text layers instead of OCRing those pages.
     #[arg(long)]
     repair: bool,
+    /// Do not convert legacy-font (FM Abhaya) text layers; OCR those pages instead.
+    #[arg(long)]
+    no_legacy_convert: bool,
     /// Rendering resolution for OCR.
     #[arg(long, default_value_t = 300)]
     dpi: u32,
@@ -109,6 +112,7 @@ impl EngineArgs {
             ocr: self.ocr,
             verify: !self.no_verify,
             repair: self.repair,
+            legacy_convert: !self.no_legacy_convert,
             dpi: self.dpi.clamp(72, 600),
             profile: self.profile,
             workers: self.workers,

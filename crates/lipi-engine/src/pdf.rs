@@ -6,25 +6,32 @@
 //! 2. The text layer is rejected when pdf-inspector marks the page as needing OCR, when the
 //!    page uses a legacy Sinhala/Tamil font, or when lipi's script checks find Latin gibberish,
 //!    visual-order vowel signs, foreign code points or replacement characters.
-//! 3. **Verification**: a Sinhala/Tamil text layer that passes the checks is still compared with
-//!    OCR of one sample page, because mapping errors such as a lost rakaransaya (`ශී` for
-//!    `ශ්‍රී`) keep the text well-formed. When the two disagree, every Sinhala/Tamil page of the
-//!    document is OCRed.
-//! 4. **OCR** (Tesseract): the page is rendered with PDFium and recognised with the language
+//! 3. **Legacy-font conversion**: a page typed in a legacy font lipi has a table for (FM
+//!    Abhaya) is converted to Unicode token by token, converting only the words PDFium reports
+//!    as drawn with that font (see [`crate::legacy`]). The converted page must pass the script
+//!    checks; otherwise the page is OCRed.
+//! 4. **Verification**: a Sinhala/Tamil text layer (or converted page) that passes the checks is
+//!    still compared with OCR of one sample page, because mapping errors such as a lost
+//!    rakaransaya (`ශී` for `ශ්‍රී`) keep the text well-formed. When the two disagree, every
+//!    Sinhala/Tamil page of the same kind in the document is OCRed.
+//! 5. **OCR** (Tesseract): the page is rendered with PDFium and recognised with the language
 //!    packs for the scripts on the page.
 
 use crate::config::{Event, ExtractConfig, OcrMode};
+use crate::legacy::{FontWords, convert_markdown, font_words};
 use crate::metrics::agreement;
 use crate::ocr::{OcrEngine, lang_arg};
 use anyhow::{Context, Result};
 use lipi_core::{Method, Page};
 use lipi_script::fonts::{is_prior_ocr_font, is_unnamed_truetype, legacy_font};
 use lipi_script::health::Verdict;
+use lipi_script::legacy::{Converter, converter};
 use lipi_script::repair::repair_visual_order;
 use lipi_script::{Lang, ScriptShares, assess};
 use lipi_sys::governor::{Governor, Hold};
 use pdfium_render::prelude::*;
 use rayon::prelude::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -32,6 +39,11 @@ use std::time::Instant;
 /// Minimum order-insensitive agreement between a Sinhala/Tamil text layer and OCR for the text
 /// layer to be trusted.
 pub const VERIFY_MIN_AGREEMENT: f64 = 0.90;
+/// Minimum agreement between a converted legacy-font page and OCR. Lower than
+/// [`VERIFY_MIN_AGREEMENT`] because here the OCR side carries the errors: on 41 held-out FM
+/// Abhaya gazette pages the converted text and Tesseract agreed at 0.82-1.00 (median 0.94), the
+/// low end being tables that the two read in different orders (see `bench/README.md`).
+pub const LEGACY_VERIFY_MIN_AGREEMENT: f64 = 0.80;
 /// Indic letters a page needs before it is used for verification.
 const VERIFY_MIN_LETTERS: usize = 200;
 /// OCR confidence below which a page is flagged.
@@ -95,6 +107,9 @@ fn has_latin_font(fonts: &[String]) -> bool {
     })
 }
 
+/// Selects the page plans one verification sample stands for.
+type MethodFilter = fn(&Method) -> bool;
+
 /// Router decision for one page.
 #[derive(Debug, Clone)]
 enum Plan {
@@ -132,39 +147,89 @@ pub fn extract(
         }
     };
 
-    // 1. Plan every page from its text layer.
-    let mut plans: Vec<Plan> = Vec::with_capacity(page_count);
-    for i in 0..page_count {
-        let page_fonts = fonts.get(i).cloned().unwrap_or_default();
-        let (md, needs_ocr, reason) = match &inspected {
-            Ok(r) => {
-                let p = &r.pages[i];
-                (lipi_script::normalize(&p.markdown), p.needs_ocr, p.ocr_reason.clone())
+    // 1. Plan every page from its text layer. Pages typed in a convertible legacy font also get
+    //    per-font word sets from PDFium so that only legacy-font tokens are converted. When lopdf
+    //    cannot read the file (damaged cross-reference tables are common), PDFium's font names
+    //    stand in for pages whose text layer reads as Latin.
+    let mut fonts = fonts;
+    fonts.resize(page_count, Vec::new());
+    let raw_md = |i: usize| inspected.as_ref().map(|r| r.pages[i].markdown.as_str()).unwrap_or("");
+    let converting = cfg.legacy_convert && cfg.ocr != OcrMode::Always;
+    let probe: Vec<usize> = (0..page_count)
+        .filter(|&i| {
+            converting && fonts[i].is_empty() && {
+                let s = ScriptShares::of(raw_md(i));
+                let garbled = inspected
+                    .as_ref()
+                    .is_ok_and(|r| r.pages[i].ocr_reason.as_deref().is_some_and(|x| x.contains("garbled")));
+                (s.latin >= 100 && s.shares().latin > 0.5) || garbled
             }
-            Err(_) => (String::new(), true, Some("unreadable".into())),
+        })
+        .collect();
+    let mut words: HashMap<usize, FontWords> =
+        if probe.is_empty() { HashMap::new() } else { font_words(bytes, &probe) };
+    for (&i, w) in &words {
+        fonts[i] = w.fonts.clone();
+    }
+    let converters: Vec<Option<&'static Converter>> = (0..page_count)
+        .map(|i| {
+            if !converting {
+                return None;
+            }
+            fonts[i].iter().find_map(|f| legacy_font(f)).and_then(|l| converter(l.family))
+        })
+        .collect();
+    let convertible: Vec<usize> =
+        (0..page_count).filter(|&i| converters[i].is_some() && !words.contains_key(&i)).collect();
+    if !convertible.is_empty() {
+        let w = font_words(bytes, &convertible);
+        if w.len() < convertible.len() {
+            warnings.push(
+                "font information unavailable for some legacy-font pages; every token converted".into(),
+            );
+        }
+        words.extend(w);
+    }
+    let mut plans: Vec<Plan> = Vec::with_capacity(page_count);
+    for (i, conv) in converters.iter().enumerate() {
+        let page_fonts = &fonts[i];
+        let (needs_ocr, reason) = match &inspected {
+            Ok(r) => (r.pages[i].needs_ocr, r.pages[i].ocr_reason.clone()),
+            Err(_) => (true, Some("unreadable".into())),
         };
-        plans.push(plan_page(&md, needs_ocr, reason, &page_fonts, cfg));
+        let legacy = conv.map(|c| (c, words.get(&i)));
+        plans.push(plan_page(raw_md(i), needs_ocr, reason, page_fonts, legacy, cfg));
     }
 
-    // 2. Verify Sinhala/Tamil text layers against OCR of the richest page.
-    let mut verified_ocr: Option<(usize, Page)> = None;
+    // 2. Verify Sinhala/Tamil text layers, and converted legacy-font pages, against OCR of the
+    //    richest page of each kind.
+    let mut verified_ocr: HashMap<usize, Page> = HashMap::new();
     if cfg.verify
         && cfg.ocr == OcrMode::Auto
         && let Some(engine) = ocr
     {
-        let candidate = plans
-            .iter()
-            .enumerate()
-            .filter_map(|(i, p)| match p {
-                Plan::Text { markdown, method: Method::TextLayer, .. } => {
-                    let s = ScriptShares::of(markdown);
-                    (s.si + s.ta >= VERIFY_MIN_LETTERS).then_some((i, s.si + s.ta))
-                }
-                _ => None,
-            })
-            .max_by_key(|&(_, n)| n)
-            .map(|(i, _)| i);
-        if let Some(i) = candidate {
+        let groups: [(MethodFilter, f64, &str); 2] = [
+            (|m| matches!(m, Method::TextLayer), VERIFY_MIN_AGREEMENT, "text layer"),
+            (
+                |m| matches!(m, Method::LegacyConverted { .. }),
+                LEGACY_VERIFY_MIN_AGREEMENT,
+                "converted legacy-font text",
+            ),
+        ];
+        for (is_kind, min_agreement, label) in groups {
+            let candidate = plans
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| match p {
+                    Plan::Text { markdown, method, .. } if is_kind(method) => {
+                        let s = ScriptShares::of(markdown);
+                        (s.si + s.ta >= VERIFY_MIN_LETTERS).then_some((i, s.si + s.ta))
+                    }
+                    _ => None,
+                })
+                .max_by_key(|&(_, n)| n)
+                .map(|(i, _)| i);
+            let Some(i) = candidate else { continue };
             let Plan::Text { markdown, .. } = &plans[i] else { unreachable!() };
             let langs = ScriptShares::of(markdown).languages(0.15, 20);
             let tmp = tempfile::Builder::new().prefix("lipi-").tempdir()?;
@@ -172,12 +237,14 @@ pub fn extract(
                 Ok(images) => {
                     let page = ocr_page(engine, governor, &images[0].image, i, &langs, cfg, events, vec![]);
                     let score = agreement(markdown, &page.markdown);
-                    if score < VERIFY_MIN_AGREEMENT {
+                    if score < min_agreement {
                         events(Event::Info(format!(
-                            "text layer disagrees with OCR (agreement {score:.2}); using OCR for Sinhala/Tamil pages"
+                            "{label} disagrees with OCR (agreement {score:.2}); using OCR for Sinhala/Tamil pages"
                         )));
                         for p in plans.iter_mut() {
-                            if let Plan::Text { markdown, method: Method::TextLayer, .. } = p {
+                            if let Plan::Text { markdown, method, .. } = p
+                                && is_kind(method)
+                            {
                                 let s = ScriptShares::of(markdown);
                                 if s.si + s.ta >= 50 {
                                     *p = Plan::Ocr {
@@ -189,10 +256,12 @@ pub fn extract(
                         }
                         let mut page = page;
                         page.flags.insert(0, format!("verify_failed:{score:.2}"));
-                        verified_ocr = Some((i, page));
+                        verified_ocr.insert(i, page);
                     } else {
                         for p in plans.iter_mut() {
-                            if let Plan::Text { markdown, flags, .. } = p {
+                            if let Plan::Text { markdown, method, flags } = p
+                                && is_kind(method)
+                            {
                                 let s = ScriptShares::of(markdown);
                                 if s.si + s.ta >= 50 {
                                     flags.push(format!("verified:{score:.2}"));
@@ -210,11 +279,11 @@ pub fn extract(
     let ocr_indices: Vec<usize> = plans
         .iter()
         .enumerate()
-        .filter(|(i, p)| matches!(p, Plan::Ocr { .. }) && verified_ocr.as_ref().is_none_or(|(v, _)| v != i))
+        .filter(|(i, p)| matches!(p, Plan::Ocr { .. }) && !verified_ocr.contains_key(i))
         .map(|(i, _)| i)
         .collect();
     let mut ocr_pages: Vec<Option<Page>> = vec![None; page_count];
-    if let Some((i, p)) = verified_ocr.take() {
+    for (i, p) in verified_ocr.drain() {
         ocr_pages[i] = Some(p);
     }
     if !ocr_indices.is_empty() {
@@ -312,13 +381,17 @@ pub fn extract(
     Ok((pages, warnings))
 }
 
+/// Decide how to extract one page from its raw pdf-inspector Markdown. `convert` carries the
+/// converter for the page's legacy font and PDFium's per-font words (`None` when unavailable).
 fn plan_page(
-    md: &str,
+    raw_md: &str,
     needs_ocr: bool,
     reason: Option<String>,
     fonts: &[String],
+    convert: Option<(&Converter, Option<&FontWords>)>,
     cfg: &ExtractConfig,
 ) -> Plan {
+    let md = &lipi_script::normalize(raw_md);
     let legacy = fonts.iter().find_map(|f| legacy_font(f));
     let expected = cfg.langs.first().copied().or(legacy.map(|l| l.lang));
     let health = assess(md, expected);
@@ -359,6 +432,41 @@ fn plan_page(
         flags.push("ocr_forced".into());
         return Plan::Ocr { langs: langs_for_ocr(), flags };
     }
+    // A legacy-font page is converted before pdf-inspector's verdict is honoured: its
+    // "suspected garbled text" is exactly what a legacy font looks like.
+    if let Some(l) = legacy
+        && (health.shares.latin > 0.5 || md.trim().is_empty())
+        && let Some((conv, words)) = convert
+        && conv.family == l.family
+    {
+        // Convert before normalisation: a legacy code such as U+00AD is a glyph here. When
+        // pdf-inspector withheld the text it suspected of being garbled, PDFium's text stands in
+        // (plain lines, no headings or tables).
+        let source = match words {
+            Some(w) if raw_md.trim().is_empty() && !w.text.trim().is_empty() => {
+                flags.push("legacy_text_source:pdfium".into());
+                w.text.as_str()
+            }
+            _ => raw_md,
+        };
+        let (converted, stats) = convert_markdown(source, words, conv);
+        let after = assess(&converted, Some(conv.lang));
+        if after.is_healthy() {
+            flags.push(format!("legacy_converted:{}", conv.family));
+            if words.is_none() {
+                flags.push("legacy_convert:no_font_info".into());
+            }
+            if stats.unmatched > 0 {
+                flags.push(format!("legacy_unmatched_tokens:{}", stats.unmatched));
+            }
+            return Plan::Text {
+                markdown: converted,
+                method: Method::LegacyConverted { family: conv.family.to_string() },
+                flags,
+            };
+        }
+        flags.push(format!("legacy_convert_failed:{}", after.reasons.join("+")));
+    }
     if needs_ocr {
         flags.push(format!("inspector:{}", reason.unwrap_or_else(|| "unreliable_text".into())));
         return Plan::Ocr { langs: langs_for_ocr(), flags };
@@ -386,7 +494,7 @@ fn plan_page(
             Plan::Ocr { langs: langs_for_ocr(), flags }
         }
         Verdict::Empty if md.trim().is_empty() => Plan::Empty,
-        _ => Plan::Text { markdown: md.to_string(), method: Method::TextLayer, flags },
+        _ => Plan::Text { markdown: md.clone(), method: Method::TextLayer, flags },
     }
 }
 
@@ -540,7 +648,7 @@ mod tests {
     fn legacy_font_page_goes_to_ocr_with_its_language() {
         let fm = "Y%S ,xld m%cd;dka;%sl iudcjd§ ckrcfha w;s úfYI .eiÜ m;%h wxl 2256$28 – 2021 fkdjeïn¾ ui 30 jeks wÕyrejdod ".repeat(4);
         let fonts = vec!["DAPBCE+FMAbhayax".to_string(), "DAPBAA+TimesNewRomanPS-BoldMT".to_string()];
-        match plan_page(&fm, false, None, &fonts, &cfg()) {
+        match plan_page(&fm, false, None, &fonts, None, &cfg()) {
             Plan::Ocr { langs, flags } => {
                 assert_eq!(langs, vec![Lang::Si, Lang::En]);
                 assert!(flags.contains(&"legacy_font:fm-abhaya".to_string()));
@@ -550,11 +658,39 @@ mod tests {
     }
 
     #[test]
+    fn legacy_font_page_is_converted_when_a_table_exists() {
+        let fm = "Y%S ,xld m%cd;dka;%sl iudcjd§ ckrcfha w;s úfYI .eiÜ m;%h wxl 2256$28 – 2021 fkdjeïn¾ ui 30 jeks wÕyrejdod ".repeat(4);
+        let fonts = vec!["DAPBCE+FMAbhayax".to_string(), "DAPBAA+TimesNewRomanPS-BoldMT".to_string()];
+        let conv = converter("fm-abhaya").unwrap();
+        let mut words = FontWords { legacy_chars: 100, other_chars: 0, ..Default::default() };
+        words.legacy.extend(fm.split_whitespace().map(str::to_string));
+        match plan_page(&fm, false, None, &fonts, Some((conv, Some(&words))), &cfg()) {
+            Plan::Text { markdown, method: Method::LegacyConverted { family }, flags } => {
+                assert_eq!(family, "fm-abhaya");
+                assert!(
+                    markdown.starts_with("ශ්\u{200D}රී ලංකා ප්\u{200D}රජාතාන්ත්\u{200D}රික සමාජවාදී ජනරජයේ"),
+                    "{markdown}"
+                );
+                assert!(markdown.contains("2256/28 – 2021 නොවැම්බර් මස 30 වැනි අඟහරුවාදා"), "{markdown}");
+                assert!(flags.contains(&"legacy_converted:fm-abhaya".to_string()));
+            }
+            other => panic!("{other:?}"),
+        }
+        // Switched off, or without a table for the family, the page goes to OCR as before.
+        let off = ExtractConfig { legacy_convert: false, ..cfg() };
+        assert!(matches!(plan_page(&fm, false, None, &fonts, None, &off), Plan::Ocr { .. }));
+        assert!(matches!(
+            plan_page(&fm, false, None, &["Bamini".to_string()], Some((conv, Some(&words))), &cfg()),
+            Plan::Ocr { .. }
+        ));
+    }
+
+    #[test]
     fn visual_order_page_is_repaired_when_asked() {
         let bad = "இலங்ைகச் சனநாயக ேசாசலிசக் குடியரசு பாராளுமன்றம் ".repeat(5);
-        assert!(matches!(plan_page(&bad, false, None, &[], &cfg()), Plan::Ocr { .. }));
+        assert!(matches!(plan_page(&bad, false, None, &[], None, &cfg()), Plan::Ocr { .. }));
         let c = ExtractConfig { repair: true, ..cfg() };
-        match plan_page(&bad, false, None, &[], &c) {
+        match plan_page(&bad, false, None, &[], None, &c) {
             Plan::Text { markdown, method: Method::TextLayerRepaired { moved }, .. } => {
                 assert!(markdown.starts_with("இலங்கைச் சனநாயக சோசலிசக்"));
                 assert_eq!(moved, 10);
@@ -567,10 +703,10 @@ mod tests {
     fn healthy_english_uses_the_text_layer() {
         let en = "The appellant contends that the learned judge erred in law and that the order should be set aside. ".repeat(3);
         assert!(matches!(
-            plan_page(&en, false, None, &["Times-Roman".into()], &cfg()),
+            plan_page(&en, false, None, &["Times-Roman".into()], None, &cfg()),
             Plan::Text { method: Method::TextLayer, .. }
         ));
-        assert!(matches!(plan_page("", false, None, &[], &cfg()), Plan::Empty));
-        assert!(matches!(plan_page(&en, true, Some("scanned".into()), &[], &cfg()), Plan::Ocr { .. }));
+        assert!(matches!(plan_page("", false, None, &[], None, &cfg()), Plan::Empty));
+        assert!(matches!(plan_page(&en, true, Some("scanned".into()), &[], None, &cfg()), Plan::Ocr { .. }));
     }
 }

@@ -9,12 +9,15 @@ page: "PDF page\npdf-inspector markdown + needs_ocr\nlopdf font names" {class: p
 forced: "--ocr always?" {class: decision}
 insp: "pdf-inspector:\nneeds OCR?" {class: decision}
 legacy: "Legacy Sinhala/Tamil font\n(FM*, DL*, Bamini, …) and\nLatin text?" {class: decision}
+table: "Converter table for the family\n(FM Abhaya) and not\n--no-legacy-convert?" {class: decision}
+convert: "Convert legacy-font tokens\n(PDFium per-glyph fonts keep\nLatin text) · re-check health" {class: lang}
+converted: "Converted text layer\nheadings · tables" {class: ok}
 health: "lipi-script health check" {class: decision}
 repair: "--repair and only\nvisual-order defects?" {class: decision}
 fixed: "Text layer, repaired\n(vowel signs moved, NFC)" {class: ok}
 indic: "Sinhala/Tamil\ntext ≥ 200 letters?" {class: decision}
 verify: "Verify: OCR the richest page\ncompare (bigram agreement)" {class: lang}
-agree: "agreement ≥ 0.90?" {class: decision}
+agree: "agreement ≥ 0.90\n(converted: ≥ 0.80)?" {class: decision}
 text: "Use text layer\nheadings · tables" {class: ok}
 ocr: "OCR\nrender 300 dpi (PDFium)\nTesseract with page's scripts" {class: extract}
 
@@ -23,8 +26,12 @@ forced -> ocr: "yes" {class: fail}
 forced -> insp: "no"
 insp -> ocr: "yes: scanned / garbled" {class: fail}
 insp -> legacy: "no"
-legacy -> ocr: "yes" {class: fail}
+legacy -> table: "yes"
 legacy -> health: "no"
+table -> convert: "yes"
+table -> ocr: "no" {class: fail}
+convert -> indic: "healthy"
+convert -> ocr: "broken" {class: fail}
 health -> repair: "broken"
 health -> indic: "healthy"
 repair -> fixed: "yes, re-check passes"
@@ -33,4 +40,5 @@ indic -> verify: "yes"
 indic -> text: "no"
 verify -> agree
 agree -> text: "yes · flag verified"
-agree -> ocr: "no · all Sinhala/Tamil pages" {class: fail}
+agree -> converted: "yes (converted pages)"
+agree -> ocr: "no · all Sinhala/Tamil pages\nof the same kind" {class: fail}

@@ -3,6 +3,7 @@
 pub mod config;
 pub mod extract;
 pub mod html;
+pub mod legacy;
 pub mod metrics;
 pub mod ocr;
 pub mod pdf;
