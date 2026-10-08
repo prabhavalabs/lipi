@@ -36,6 +36,8 @@ pub const VERIFY_MIN_AGREEMENT: f64 = 0.90;
 const VERIFY_MIN_LETTERS: usize = 200;
 /// OCR confidence below which a page is flagged.
 const LOW_CONFIDENCE: f32 = 70.0;
+/// OCR confidence below which the language packs are re-probed and the page retried once.
+const RETRY_CONFIDENCE: f32 = 55.0;
 
 static PDFIUM: OnceLock<Result<Pdfium, String>> = OnceLock::new();
 
@@ -396,12 +398,17 @@ struct Rendered {
 
 /// Languages implied by a text layer even when its text is unusable: broken Sinhala/Tamil
 /// mappings still use code points of the right script. Legacy-font (Latin) text gives nothing.
+///
+/// A Latin-only hint is ignored: a page that needs OCR and whose text layer reads as Latin may
+/// well be a legacy or unmapped Sinhala/Tamil font, so such pages are probed instead.
 fn script_hint(text: &str) -> Vec<Lang> {
     let h = assess(text, None);
     if h.latin_gibberish >= 0.5 {
         return Vec::new();
     }
-    h.letters.languages(0.03, 50).into_iter().filter(|&l| h.letters.count(l) >= 30).collect()
+    let langs: Vec<Lang> =
+        h.letters.languages(0.03, 50).into_iter().filter(|&l| h.letters.count(l) >= 30).collect();
+    if langs.iter().any(|l| l.is_indic()) { langs } else { Vec::new() }
 }
 
 /// Render pages (0-based indices) to greyscale PNGs.
@@ -449,7 +456,31 @@ fn ocr_page(
     } else {
         langs.to_vec()
     };
-    let result = engine.recognize(image, &langs, 3, Some(cfg.dpi));
+    let mut result = engine.recognize(image, &langs, 3, Some(cfg.dpi));
+    let mut langs = langs;
+    // Safety net: very low confidence usually means the wrong language packs. Probe the page and
+    // retry once with what the probe finds, keeping whichever result is more confident.
+    let conf_of = |r: &Result<Vec<crate::ocr::OcrPage>>| {
+        r.as_ref().ok().and_then(|v| v.first()).and_then(|p| p.confidence).unwrap_or(0.0)
+    };
+    // An explicit --lang is never overridden.
+    if cfg.langs.is_empty()
+        && conf_of(&result) < RETRY_CONFIDENCE
+        && !flags.iter().any(|f| f.starts_with("probed_langs"))
+    {
+        let scratch = image.parent().unwrap_or(Path::new("."));
+        if let Ok(probed) = engine.probe_langs(image, scratch)
+            && !probed.is_empty()
+            && probed != langs
+        {
+            let retry = engine.recognize(image, &probed, 3, Some(cfg.dpi));
+            if conf_of(&retry) > conf_of(&result) {
+                flags.push(format!("retried_langs:{}->{}", lang_arg(&langs), lang_arg(&probed)));
+                result = retry;
+                langs = probed;
+            }
+        }
+    }
     let mut page = match result {
         Ok(pages) => {
             let p = pages.into_iter().next();
@@ -490,6 +521,16 @@ pub fn describe_hold(h: &Hold) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latin_only_text_layers_give_no_language_hint() {
+        let en =
+            "Parliament of the Democratic Socialist Republic of Sri Lanka and the Act shall come into force "
+                .repeat(3);
+        assert!(script_hint(&en).is_empty());
+        let ta = "இலங்ைகச் சனநாயக ேசாசᾢசக் குᾊயரசு வர்த்தமானப் பத்திாிைக Gazette Extraordinary ".repeat(3);
+        assert_eq!(script_hint(&ta), vec![Lang::Ta, Lang::En]);
+    }
 
     fn cfg() -> ExtractConfig {
         ExtractConfig::default()
