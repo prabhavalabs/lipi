@@ -41,6 +41,8 @@ pub struct ExtractConfig {
     pub repair: bool,
     /// Convert text layers typed in a legacy font (FM Abhaya) instead of OCRing those pages.
     pub legacy_convert: bool,
+    /// Correct systematic OCR confusions in Sinhala with the installed lexicon.
+    pub correct: bool,
     /// Rendering resolution for OCR.
     pub dpi: u32,
     /// Resource profile.
@@ -57,6 +59,7 @@ impl Default for ExtractConfig {
             verify: true,
             repair: false,
             legacy_convert: true,
+            correct: true,
             dpi: 300,
             profile: Profile::Balanced,
             workers: None,

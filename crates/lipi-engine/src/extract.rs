@@ -4,9 +4,11 @@ use crate::config::{Event, ExtractConfig};
 use crate::html::html_to_markdown;
 use crate::ocr::{OcrEngine, lang_arg};
 use crate::pdf;
+use crate::postcorrect;
 use crate::text::{decode, text_to_markdown};
 use anyhow::{Context, Result, bail};
 use lipi_core::{Document, InputFormat, Method, Page, sniff};
+use lipi_script::correct::Corrector;
 use lipi_script::{Lang, ScriptShares, assess};
 use lipi_sys::governor::Governor;
 use lipi_sys::{Hardware, deps, paths};
@@ -18,6 +20,7 @@ pub struct Extractor {
     cfg: ExtractConfig,
     ocr: Option<OcrEngine>,
     governor: Governor,
+    corrector: Option<Corrector>,
     notes: Vec<String>,
 }
 
@@ -42,7 +45,22 @@ impl Extractor {
                 "Tesseract was not found: scanned pages and images cannot be read (run `lipi setup`)".into(),
             );
         }
-        Extractor { cfg, ocr, governor, notes }
+        let corrector = match (cfg.correct, ocr.is_some()) {
+            (true, true) => match postcorrect::load(Lang::Si) {
+                Ok(c) => c,
+                Err(note) => {
+                    notes.push(note);
+                    None
+                }
+            },
+            _ => None,
+        };
+        Extractor { cfg, ocr, governor, corrector, notes }
+    }
+
+    /// The post-corrector in use, if a lexicon is installed and correction is enabled.
+    pub fn corrector(&self) -> Option<&Corrector> {
+        self.corrector.as_ref()
     }
 
     /// Setup notes (missing components) to show the user once.
@@ -61,8 +79,14 @@ impl Extractor {
         events(Event::DocumentStart { source: doc.source.clone(), pages: None });
         match format {
             InputFormat::Pdf => {
-                let (pages, warnings) =
-                    pdf::extract(&bytes, &self.cfg, self.ocr.as_ref(), &self.governor, events)?;
+                let (pages, warnings) = pdf::extract(
+                    &bytes,
+                    &self.cfg,
+                    self.ocr.as_ref(),
+                    self.corrector(),
+                    &self.governor,
+                    events,
+                )?;
                 doc.pages = pages;
                 doc.warnings.extend(warnings);
             }
@@ -148,10 +172,10 @@ impl Extractor {
                     r.page,
                     Method::Ocr { engine: engine.engine_id(), langs: lang_arg(&langs), dpi: 0 },
                 );
-                p.markdown = lipi_script::normalize(&r.text);
+                p.flags = flags.clone();
+                p.markdown = postcorrect::finish(&r, self.corrector(), &mut p.flags);
                 p.langs = ScriptShares::of(&p.markdown).languages(0.05, 20);
                 p.confidence = r.confidence;
-                p.flags = flags.clone();
                 if r.confidence.is_some_and(|c| c < 70.0) {
                     p.flags.push("low_ocr_confidence".into());
                 }

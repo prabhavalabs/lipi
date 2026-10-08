@@ -21,8 +21,10 @@ use crate::config::{Event, ExtractConfig, OcrMode};
 use crate::legacy::{FontWords, convert_markdown, font_words};
 use crate::metrics::agreement;
 use crate::ocr::{OcrEngine, lang_arg};
+use crate::postcorrect;
 use anyhow::{Context, Result};
 use lipi_core::{Method, Page};
+use lipi_script::correct::Corrector;
 use lipi_script::fonts::{is_prior_ocr_font, is_unnamed_truetype, legacy_font};
 use lipi_script::health::Verdict;
 use lipi_script::legacy::{Converter, converter};
@@ -129,6 +131,7 @@ pub fn extract(
     bytes: &[u8],
     cfg: &ExtractConfig,
     ocr: Option<&OcrEngine>,
+    corrector: Option<&Corrector>,
     governor: &Governor,
     events: &(dyn Fn(Event) + Sync),
 ) -> Result<(Vec<Page>, Vec<String>)> {
@@ -235,7 +238,17 @@ pub fn extract(
             let tmp = tempfile::Builder::new().prefix("lipi-").tempdir()?;
             match render_pages(bytes, &[i], cfg.dpi, tmp.path()) {
                 Ok(images) => {
-                    let page = ocr_page(engine, governor, &images[0].image, i, &langs, cfg, events, vec![]);
+                    let page = ocr_page(
+                        engine,
+                        corrector,
+                        governor,
+                        &images[0].image,
+                        i,
+                        &langs,
+                        cfg,
+                        events,
+                        vec![],
+                    );
                     let score = agreement(markdown, &page.markdown);
                     if score < min_agreement {
                         events(Event::Info(format!(
@@ -321,7 +334,8 @@ pub fn extract(
                                         _ => vec![],
                                     };
                                     let page = ocr_page(
-                                        engine, governor, &j.image, j.index, &j.langs, cfg, events, flags,
+                                        engine, corrector, governor, &j.image, j.index, &j.langs, cfg,
+                                        events, flags,
                                     );
                                     events(Event::OcrPageDone);
                                     (j.index, page)
@@ -541,6 +555,7 @@ fn render_pages(bytes: &[u8], indices: &[usize], dpi: u32, dir: &Path) -> Result
 #[allow(clippy::too_many_arguments)]
 fn ocr_page(
     engine: &OcrEngine,
+    corrector: Option<&Corrector>,
     governor: &Governor,
     image: &Path,
     index: usize,
@@ -597,7 +612,7 @@ fn ocr_page(
                 Method::Ocr { engine: engine.engine_id(), langs: lang_arg(&langs), dpi: cfg.dpi },
             );
             if let Some(p) = p {
-                page.markdown = lipi_script::normalize(&p.text);
+                page.markdown = postcorrect::finish(&p, corrector, &mut flags);
                 page.confidence = p.confidence;
                 if p.confidence.is_some_and(|c| c < LOW_CONFIDENCE) {
                     flags.push("low_ocr_confidence".into());

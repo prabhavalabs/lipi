@@ -22,6 +22,16 @@ pub fn tessdata_dir() -> PathBuf {
     data_dir().join("tessdata").join(TESSDATA_SET)
 }
 
+/// Directory holding word lexicons for OCR post-correction (`lipi lexicon build`).
+pub fn lexicon_dir() -> PathBuf {
+    data_dir().join("lexicon")
+}
+
+/// Path of the lexicon for an ISO 639-1 language code, e.g. `si`.
+pub fn lexicon_file(lang: &str) -> PathBuf {
+    lexicon_dir().join(format!("{lang}.lex"))
+}
+
 /// Directory holding the pinned PDFium build.
 pub fn pdfium_dir() -> PathBuf {
     data_dir().join("pdfium").join(PDFIUM_TAG.replace('/', "-"))
