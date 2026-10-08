@@ -1,0 +1,81 @@
+# ---------------------------------------------------------------------------
+# Rust
+# ---------------------------------------------------------------------------
+/target/
+**/*.rs.bk
+*.pdb
+
+# ---------------------------------------------------------------------------
+# Python (optional workers and tooling)
+# ---------------------------------------------------------------------------
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# ---------------------------------------------------------------------------
+# Local data, models and benchmark corpora (never versioned)
+# ---------------------------------------------------------------------------
+/data/
+/models/
+/bench/corpus/
+/bench/results/
+*.traineddata
+*.onnx
+*.gguf
+*.safetensors
+lipi-out/
+
+# ---------------------------------------------------------------------------
+# AI agent and editor-assistant files (local only, never committed)
+# ---------------------------------------------------------------------------
+AGENTS.md
+CLAUDE.md
+CLAUDE.local.md
+GEMINI.md
+.claude/
+.agents/
+.codex/
+.cursor/
+.cursorrules
+.cursorignore
+.windsurf/
+.windsurfrules
+.aider*
+.continue/
+.clinerules
+.cline/
+.roo/
+.roomodes
+.kiro/
+.junie/
+.gemini/
+.amazonq/
+.zed/
+.mcp.json
+mcp.json
+.github/copilot-instructions.md
+.github/instructions/
+.github/prompts/
+.github/chatmodes/
+
+# ---------------------------------------------------------------------------
+# Secrets and local configuration
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials*.json
+
+# ---------------------------------------------------------------------------
+# Operating system and editors
+# ---------------------------------------------------------------------------
+.DS_Store
+._*
+Thumbs.db
+.idea/
+.vscode/
+*.swp
