@@ -1,0 +1,33 @@
+...@_theme
+direction: down
+title: |md
+  # 06 · Workspace and external components
+| {near: top-center}
+
+cli: "lipi-cli\n`lipi` binary: extract · doctor · setup · bench" {class: app}
+engine: "lipi-engine\nextractors · router · OCR driver · metrics" {class: extract}
+core: "lipi-core\ndocument model · format detection · renderers" {class: prepare}
+script: "lipi-script\nSinhala / Tamil / Latin script logic" {class: lang}
+sys: "lipi-sys\nhardware · profiles · governor · installer" {class: governor}
+
+ext: "External (licence)" {
+  class: group
+  grid-columns: 5
+  inspector: "pdf-inspector\n(MIT)" {class: source}
+  anydoc: "anydoc\n(MIT)" {class: source}
+  pdfium: "PDFium\n(BSD-3)" {class: source}
+  tess: "Tesseract 5\n(Apache-2.0)" {class: source}
+  models: "tessdata_best\n(Apache-2.0)" {class: source}
+}
+
+cli -> engine
+cli -> sys
+engine -> core
+engine -> script
+engine -> sys
+core -> script
+engine -> ext.inspector
+engine -> ext.anydoc
+engine -> ext.pdfium: "dynamic library" {class: async}
+engine -> ext.tess: "subprocess" {class: async}
+sys -> ext.models: "pinned download" {class: async}

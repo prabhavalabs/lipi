@@ -8,19 +8,71 @@
   - It verifies Sinhala and Tamil text against OCR.
   - It chooses OCR languages from the scripts actually on the page.
 - **Hardware-aware.** It detects CPU cores, memory and GPU, recommends a profile, warns when the machine cannot run one, and throttles itself so the machine stays responsive.
-- **Fast.** The core is written in Rust. Python is used only for optional model-based engines.
+- **Fast.** The core is written in Rust. Python is used only for optional tooling and future model-based engines.
 
-> Status: early development. See [the roadmap](#roadmap).
+> Status: early development (0.1). See the [roadmap](docs/architecture/README.md#roadmap).
 
 ## Quick start
 
 ```bash
-cargo install --path crates/lipi-cli     # build and install the `lipi` binary
+cargo install --path crates/lipi-cli     # build and install the `lipi` binary (Rust 1.88+)
 lipi doctor                              # inspect hardware and dependencies
-lipi setup                               # install OCR engine, language models and PDF renderer
+lipi setup                               # install the OCR engine, language models and PDF renderer
 lipi extract report.pdf                  # Markdown to stdout
 lipi extract scans/ -o out/ --format json
 ```
+
+`lipi setup` lists every action and asks before doing anything. It:
+1. installs Tesseract with the system package manager (Homebrew, apt, dnf, pacman, zypper, apk, winget, Chocolatey or Scoop);
+2. downloads the pinned `tessdata_best` models for English, Sinhala and Tamil (38 MB);
+3. downloads a PDFium build (3.5 MB).
+
+Every download is verified by SHA-256.
+
+## Usage
+
+```
+lipi extract <INPUT>... [-o OUT] [-f md|json|txt] [options]
+```
+
+| Option | Meaning |
+|---|---|
+| `-f, --format` | `md` (default), `json` (per-page method, languages, OCR confidence, flags) or `txt` |
+| `-l, --lang si,ta,en` | Expected languages. Detected per page when omitted |
+| `--ocr auto\|always\|never` | When to OCR PDF pages (default `auto`) |
+| `--no-verify` | Skip checking Sinhala/Tamil text layers against OCR |
+| `--repair` | Repair visual-order vowel signs instead of OCRing those pages |
+| `--dpi 300` | Rendering resolution for OCR |
+| `-p, --profile gentle\|balanced\|max` | Resource profile (default `balanced`) |
+| `-w, --workers N` | Override the number of OCR workers |
+| `--page-markers` | Insert `<!-- page N -->` between pages |
+
+Supported inputs:
+- PDF;
+- PNG, JPEG, TIFF (multi-page), BMP, WebP and GIF;
+- DOC/DOCX, ODT, PPT/PPTX, XLS/XLSX, ODS/ODP, RTF, EPUB and CSV;
+- HTML, Markdown and plain text in any common encoding.
+
+Formats are detected from content, not from file extensions.
+
+**Profiles** (on an Apple M4 with 4 performance and 6 efficiency cores):
+
+| Profile | OCR workers | Behaviour |
+|---|---|---|
+| `gentle` | 2 | Lowest priority, macOS background QoS (efficiency cores), waits when memory pressure appears |
+| `balanced` | 3 | Performance cores minus one, reduced priority |
+| `max` | 10 | Every physical core; waits only on critical memory pressure |
+
+Environment variables:
+- `LIPI_HOME`: data directory.
+- `LIPI_TESSERACT`: path of the Tesseract executable.
+- `LIPI_PDFIUM`: path of the PDFium library.
+
+## Accuracy
+
+`lipi bench <dir>` reports CER and WER for every document that has a `<name>.gt.txt`. On 24 synthetic A4 pages (clean and degraded, several fonts), the mean CER is **0.58% for Tamil** and **5.2% for Sinhala**. The Sinhala figure ranges from 0.03–2.7% with Noto Sans Sinhala to 6–9% with Apple's Sinhala MN fonts. Details and model comparisons are in [bench/README.md](bench/README.md).
+
+The way lipi decides between a text layer and OCR, and why Sinhala and Tamil text layers are verified, is described in [docs/architecture](docs/architecture/README.md).
 
 ## Repository layout
 
@@ -29,21 +81,28 @@ crates/lipi-core     Document model, input format detection, Markdown / JSON / t
 crates/lipi-script   Sinhala / Tamil / Latin script analysis, text-layer health checks,
                      visual-order repair, Unicode normalisation, legacy-font detection
 crates/lipi-engine   Extractors (PDF, image, HTML, text, office), OCR driver, page router,
-                     resource-governed worker pool
-crates/lipi-sys      Hardware probe, profiles, dependency installer, pinned downloads
+                     metrics
+crates/lipi-sys      Hardware probe, profiles, resource governor, dependency installer
 crates/lipi-cli      The `lipi` command-line interface
-docs/                Architecture and design notes
+bench/               Benchmark method, results and the synthetic page generator (Python)
+docs/architecture/   Architecture diagrams (D2) and design notes
 ```
 
 Not versioned: model weights, benchmark corpora and extraction output (see `.gitignore`).
 
-## Contributing
+## Development
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the branching model, commit conventions and pull-request process.
 
 ## Acknowledgements
 
-PDF text-layer extraction and office-format conversion build on [pdf-inspector](https://github.com/firecrawl/pdf-inspector) and [anydoc](https://github.com/firecrawl/anydoc) by Firecrawl (MIT). OCR uses [Tesseract](https://github.com/tesseract-ocr/tesseract) (Apache-2.0). Page rendering uses [PDFium](https://pdfium.googlesource.com/pdfium/) builds from [pdfium-binaries](https://github.com/bblanchon/pdfium-binaries).
+PDF text-layer extraction and office-format conversion build on [pdf-inspector](https://github.com/firecrawl/pdf-inspector) and [anydoc](https://github.com/firecrawl/anydoc) by Firecrawl (MIT). OCR uses [Tesseract](https://github.com/tesseract-ocr/tesseract) and the [tessdata_best](https://github.com/tesseract-ocr/tessdata_best) models (Apache-2.0). Page rendering uses [PDFium](https://pdfium.googlesource.com/pdfium/) builds from [pdfium-binaries](https://github.com/bblanchon/pdfium-binaries).
 
 ## Licence
 

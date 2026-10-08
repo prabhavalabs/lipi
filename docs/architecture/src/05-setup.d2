@@ -1,0 +1,20 @@
+...@_theme
+direction: right
+title: |md
+  # 05 · Setup and offline operation
+  One consented setup step; afterwards no network access at all
+| {near: top-center}
+
+doctor: "lipi doctor\nOS · CPU (P/E cores) · RAM\nGPU (Metal / CUDA) · disk\ndependencies · profile" {class: governor}
+plan: "lipi setup: plan\nshow every action\nand download size" {class: prepare}
+consent: "User consents?\n(or --yes)" {class: decision}
+pm: "OCR engine via the OS\npackage manager\nbrew · apt · dnf · pacman ·\nzypper · apk · winget · choco" {class: source}
+dl: "Pinned downloads\ntessdata_best e12c65a\nPDFium chromium/8086\nstreamed + SHA-256 verified" {class: source}
+store: "Data directory\nLIPI_HOME or platform default" {class: store}
+offline: "lipi extract\nfully offline" {class: ok}
+
+doctor -> plan -> consent
+consent -> pm: "yes"
+consent -> dl: "yes"
+pm -> offline
+dl -> store -> offline

@@ -1,0 +1,46 @@
+...@_theme
+direction: right
+title: |md
+  # 01 · lipi overview
+  Any input → format detection → the cheapest trustworthy extractor → Unicode-safe normalisation → Markdown / JSON / text
+| {near: top-center}
+
+flow: "" {
+  grid-columns: 5
+  horizontal-gap: 60
+  style: {fill: transparent; stroke: transparent}
+
+  inputs: "Inputs" {
+    class: group
+    grid-columns: 1
+    pdf: "PDF\nborn-digital · scanned · legacy-font" {class: source}
+    img: "Images\nPNG · JPEG · TIFF · WebP" {class: source}
+    office: "Office / e-book\nDOC(X) · ODT · PPT(X) · XLS(X)\nRTF · EPUB · CSV" {class: source}
+    web: "HTML · Markdown · plain text\nany encoding" {class: source}
+  }
+  sniff: "Format detection\nmagic bytes first,\nextension as fallback" {class: gate}
+  engine: "lipi-engine" {
+    class: group
+    grid-columns: 1
+    router: "PDF page router\ntext layer · verify · OCR\n(diagram 02)" {class: extract}
+    ocr: "OCR driver\nTesseract · tessdata_best\nsingle-threaded workers" {class: extract}
+    officex: "Office converter\nanydoc (MIT)" {class: prepare}
+    markup: "HTML → Markdown\nheadings · lists · tables" {class: prepare}
+  }
+  script: "lipi-script\nscript shares · health checks\nvisual-order repair\nNFC with ZWJ rules\nlegacy-font names" {class: lang}
+  out: "Renderers" {
+    class: group
+    grid-columns: 1
+    md: "Markdown (default)" {class: ok}
+    json: "JSON\nper-page method, languages,\nconfidence, flags" {class: ok}
+    txt: "Plain text" {class: ok}
+  }
+}
+
+sys: "lipi-sys · hardware probe · profiles · resource governor · pinned installer" {class: governor}
+
+flow.inputs -> flow.sniff
+flow.sniff -> flow.engine
+flow.engine -> flow.script: "every page"
+flow.script -> flow.out
+sys -> flow.engine: "workers · priority · admission" {class: async}
